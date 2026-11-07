@@ -16,7 +16,7 @@ function(add_bcrannel_plugin target plugin_code)
   juce_add_plugin(BCrannel${target}
     COMPANY_NAME "BCrannel"
     BUNDLE_ID "com.bcrannel.audiolab.${target}"
-    PLUGIN_MANUFACTURER_CODE BCrn
+    PLUGIN_MANUFACTURER_CODE Bcrn
     PLUGIN_CODE ${plugin_code}
     FORMATS VST3
     PRODUCT_NAME "BCrannel ${target}"
@@ -43,9 +43,9 @@ function(add_bcrannel_plugin target plugin_code)
   )
 endfunction()
 
-add_bcrannel_plugin(VoiceProcessor BcVP)
-add_bcrannel_plugin(Harmony      BcHM)
-add_bcrannel_plugin(Tune         BcTN)
-add_bcrannel_plugin(Space        BcSP)
-add_bcrannel_plugin(Master       BcMS)
-add_bcrannel_plugin(Effector     BcEF)
+add_bcrannel_plugin(VoiceProcessor Bcvp)
+add_bcrannel_plugin(Harmony      Bchm)
+add_bcrannel_plugin(Tune         Bctn)
+add_bcrannel_plugin(Space        Bcsp)
+add_bcrannel_plugin(Master       Bcms)
+add_bcrannel_plugin(Effector     Bcef)
