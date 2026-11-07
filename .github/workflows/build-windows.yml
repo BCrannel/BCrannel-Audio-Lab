@@ -1,0 +1,33 @@
+name: Build Windows VST3
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ 'CMakeLists.txt', 'Source/**', '.github/workflows/**' ]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: lukka/get-cmake@latest
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build VST3
+        run: cmake --build build --config Release --target ALL_BUILD --parallel
+      - name: Collect plugins
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Get-ChildItem -Path build -Recurse -Directory -Filter *.vst3 | ForEach-Object {
+            Copy-Item $_.FullName dist -Recurse -Force
+          }
+          if (-not (Get-ChildItem dist -Directory -Filter *.vst3)) { throw "No VST3 bundles were produced." }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BCrannel-Audio-Lab-VST3-Windows-x64
+          path: dist/**
+          if-no-files-found: error
