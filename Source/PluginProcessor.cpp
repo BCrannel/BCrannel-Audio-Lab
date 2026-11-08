@@ -1,6 +1,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
 #include <cmath>
+#include <array>
 
 class BCrannelAudioProcessor final : public juce::AudioProcessor {
 public:
@@ -41,6 +42,7 @@ public:
         const int channels = juce::jmin(buffer.getNumChannels(), 2);
         for (int c = getTotalNumInputChannels(); c < buffer.getNumChannels(); ++c)
             buffer.clear(c, 0, samples);
+        if (value("bypass") >= 0.5f) return;
 
         const auto plugin = juce::String(JucePlugin_Name);
         if (plugin.contains("Voice")) processVoice(buffer, samples, channels);
@@ -50,7 +52,7 @@ public:
         // Harmony and Tune remain transparent until their pitch engines are implemented.
     }
 
-    juce::AudioProcessorEditor* createEditor() override { return new juce::GenericAudioProcessorEditor(*this); }
+    juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     double getTailLengthSeconds() const override { return 2.0; }
     int getNumPrograms() override { return 1; }
@@ -71,6 +73,7 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
+    juce::AudioProcessorValueTreeState& getValueTreeState() { return apvts; }
 
 private:
     using Range = juce::NormalisableRange<float>;
@@ -82,6 +85,7 @@ private:
         };
         // Shared voice / dynamics controls
         add("amount", "Amount", 0.0f, 1.0f, 0.65f);
+        p.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"bypass", 1}, "Bypass", false));
         add("input", "Input", -18.0f, 18.0f, 0.0f, 0.1f);
         add("output", "Output", -18.0f, 12.0f, 0.0f, 0.1f);
         add("hpf", "Clean Low / High-pass (Hz)", 20.0f, 300.0f, 75.0f, 1.0f);
@@ -248,6 +252,111 @@ private:
     float limiterGain = 1.0f;
     float envelope=0.0f, previous[2]{0.0f,0.0f};
 };
+
+class BCrannelVoiceEditor final : public juce::AudioProcessorEditor {
+public:
+    explicit BCrannelVoiceEditor(BCrannelAudioProcessor& processor)
+        : AudioProcessorEditor(&processor), audioProcessor(processor) {
+        setSize(760, 574);
+        bypassButton.setClickingTogglesState(true);
+        bypassButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff292531));
+        bypassButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffa23d59));
+        bypassButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xfff3eff8));
+        bypassButton.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+        bypassButton.setColour(juce::TextButton::outlineColourId, juce::Colour(0xff484151));
+        addAndMakeVisible(bypassButton);
+        bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            audioProcessor.getValueTreeState(), "bypass", bypassButton);
+
+        for (size_t i = 0; i < sliders.size(); ++i) {
+            auto& slider = sliders[i];
+            slider.setSliderStyle(juce::Slider::LinearHorizontal);
+            slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 58, 22);
+            slider.setColour(juce::Slider::trackColourId, juce::Colour(0xffa98aef));
+            slider.setColour(juce::Slider::thumbColourId, juce::Colour(0xff49c6d1));
+            slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xfff3eff8));
+            slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff302c38));
+            slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+            addAndMakeVisible(slider);
+            labels[i].setText(names[i], juce::dontSendNotification);
+            labels[i].setColour(juce::Label::textColourId, juce::Colour(0xffb7afc3));
+            labels[i].setFont(juce::Font(10.5f, juce::Font::bold));
+            addAndMakeVisible(labels[i]);
+            attachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                audioProcessor.getValueTreeState(), ids[i], slider);
+        }
+    }
+
+    void paint(juce::Graphics& g) override {
+        const juce::Colour base(0xff17151d);
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff292432), 0.0f, 0.0f,
+                                               base, 760.0f, 574.0f, false));
+        g.fillAll();
+        g.setColour(juce::Colour(0xffa98aef));
+        g.fillRoundedRectangle(0.0f, 0.0f, 7.0f, 574.0f, 3.0f);
+        g.setColour(juce::Colour(0xfff3eff8));
+        g.setFont(juce::Font(24.0f, juce::Font::bold));
+        g.drawText("BCrannel Voice", 28, 20, 360, 34, juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xff49c6d1));
+        g.setFont(juce::Font(10.0f, juce::Font::bold));
+        g.drawText("VOICE PROCESSOR  /  STREAM CHAIN", 30, 55, 380, 18, juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xff484151));
+        g.drawLine(28.0f, 84.0f, 732.0f, 84.0f, 1.0f);
+        g.setColour(juce::Colour(0xffaaa3b4));
+        g.setFont(juce::Font(11.0f));
+        g.drawText("Shape your mic signal", 30, 91, 300, 20, juce::Justification::centredLeft);
+
+        constexpr float left = 24.0f, top = 126.0f, gapX = 12.0f, gapY = 10.0f;
+        constexpr float width = 229.33f, height = 74.0f;
+        for (int i = 0; i < 13; ++i) {
+            const int row = i / 3, column = i % 3;
+            const juce::Rectangle<float> card(left + column * (width + gapX), top + row * (height + gapY), width, height);
+            g.setColour(juce::Colour(0xff211e29));
+            g.fillRoundedRectangle(card, 9.0f);
+            g.setColour(juce::Colour(0xff393342));
+            g.drawRoundedRectangle(card, 9.0f, 1.0f);
+            g.setColour(i == 12 ? juce::Colour(0xff49c6d1) : juce::Colour(0xffa98aef));
+            g.fillRoundedRectangle(card.getX() + 9.0f, card.getY() + 12.0f, 3.0f, card.getHeight() - 24.0f, 1.5f);
+        }
+        g.setColour(juce::Colour(0xffaaa3b4));
+        g.setFont(juce::Font(10.0f));
+        g.drawText("Use BYPASS to compare the unprocessed mic signal.", 28, 551, 704, 16, juce::Justification::centredLeft);
+    }
+
+    void resized() override {
+        bypassButton.setBounds(610, 28, 122, 34);
+        constexpr int width = 229, height = 74, startX = 34, startY = 135, gapX = 12, gapY = 10;
+        for (int i = 0; i < 13; ++i) {
+            const int row = i / 3, column = i % 3;
+            const int x = startX + column * (width + gapX), y = startY + row * (height + gapY);
+            labels[i].setBounds(x + 12, y + 7, width - 24, 16);
+            sliders[i].setBounds(x + 10, y + 29, width - 20, 32);
+        }
+    }
+
+private:
+    static constexpr std::array<const char*, 13> ids {
+        "amount", "input", "output", "hpf", "low", "mid", "high",
+        "deess", "leveler", "color", "colorMix", "reverbMix", "limiter"
+    };
+    static constexpr std::array<const char*, 13> names {
+        "PROCESSING AMOUNT", "INPUT GAIN", "OUTPUT GAIN", "CLEAN LOW / HPF",
+        "LOW CLEANUP", "MID CLEANUP", "HIGH CLEANUP", "DE-ESS",
+        "LEVELER", "COLOR", "COLOR MIX", "REVERB MIX", "PEAK LIMIT"
+    };
+    BCrannelAudioProcessor& audioProcessor;
+    juce::TextButton bypassButton { "BYPASS" };
+    std::array<juce::Slider, 13> sliders;
+    std::array<juce::Label, 13> labels;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 13> attachments;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
+};
+
+juce::AudioProcessorEditor* BCrannelAudioProcessor::createEditor() {
+    if (juce::String(JucePlugin_Name).contains("Voice"))
+        return new BCrannelVoiceEditor(*this);
+    return new juce::GenericAudioProcessorEditor(*this);
+}
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new BCrannelAudioProcessor(); }
 
