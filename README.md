@@ -27,16 +27,17 @@ These are feature targets based on publicly described product functions. Exact i
 
 ## Current development status
 
-The first DSP foundation pass is now in the source:
-- **VoiceProcessor:** adjustable input/output, gentle level conditioning, soft saturation/color, output ceiling and basic reverb foundation. The current de-ess control is only a simple transient-softening approximation, not a frequency-selective de-esser. Voice analysis, spectral cleanup, and proper stream/monitor routing are still to be built.
-- **Space:** JUCE reverb engine with room, damping/tone, width and wet/dry foundations. Separate room/reverb engines, preset library and remaining shaping controls are still to be built.
-- **Master:** stereo mid/side width and gentle smoothing foundation. Learn/reference matching and high-frequency-only width are still to be built.
-- **Effector:** adjustable saturation/character foundation. Distinct radio, telephone and wireless filter models are still to be built.
-- **Harmony:** pitch/harmony engine not implemented yet.
-- **Tune:** pitch-correction engine not implemented yet.
+Development status (2026-11-07):
+- **Voice:** working first DSP pass includes a two-pole high-pass, fixed low/mid/high cleanup EQ cuts, a slow RMS leveler with up to 6 dB of gain change, soft saturation, output shaping and wet/dry reverb. Cleanup EQ is fixed-frequency rather than user-selectable. The de-ess control remains transient softening and is not a frequency-selective de-esser. Leveler does not perform intelligent gain learning or keyboard removal. Input/output, amount, leveler, cleanup bands, high-pass, color and reverb mix are connected. Several shared controls shown in the generic editor are not connected to VoiceProcessor and are not represented as finished features.
+- **Space:** single JUCE reverb engine with room size, damping/tone, width and fixed wet/dry balance. Independent room and reverb stages, selectable types, modulation, attack controls and presets are pending.
+- **Master:** stereo mid/side width, gentle saturation/smoothing and output level. Learn/reference matching, high-frequency-only width and monitoring are pending.
+- **Effector:** radio/telephone/wireless controls currently blend the same saturation effect; distinct filter models and tone shaping are pending.
+- **Harmony:** pitch and harmony generation are not implemented; this plugin is transparent.
+- **Tune:** pitch correction is not implemented; this plugin is transparent.
 
-The generic JUCE parameter editor currently exposes development controls; a custom BCrannel interface is planned. These are development builds, not release-ready plugins. All six are intended to remain free with no trial timer. They are built as 64-bit Windows VST3 plugins; compatibility must be confirmed by scanning and loading them in StreamGear.
+The generic JUCE parameter editor currently exposes shared development controls; some controls are not connected in every plugin. These are development builds, not release-ready plugins. All six are intended to remain free with no trial timer. The Windows x64 VST3 build and host compatibility must be confirmed before release. StreamGear compatibility must be tested by scanning and loading the plugins in StreamGear.
 
 ## License
 
 MIT. No NoroStudio code, presets, assets, UI, or reverse engineering is used.
+

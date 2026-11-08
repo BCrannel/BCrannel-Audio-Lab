@@ -11,6 +11,7 @@ public:
 
     const juce::String getName() const override { return JucePlugin_Name; }
     void prepareToPlay(double sampleRate, int samplesPerBlock) override {
+        currentSampleRate = sampleRate;
         juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) samplesPerBlock,
                                      (juce::uint32) getTotalNumOutputChannels() };
         for (auto& f : highPass) f.prepare(spec);
@@ -23,6 +24,9 @@ public:
         reverb.setParameters(rp);
         reverb.prepare(spec);
         envelope = 0.0f;
+        levelGain.reset(sampleRate, 0.08);
+        levelGain.setCurrentAndTargetValue(1.0f);
+        updateVoiceFilters();
     }
     void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout& l) const override {
@@ -38,7 +42,7 @@ public:
             buffer.clear(c, 0, samples);
 
         const auto plugin = juce::String(JucePlugin_Name);
-        if (plugin.contains("VoiceProcessor")) processVoice(buffer, samples, channels);
+        if (plugin.contains("Voice")) processVoice(buffer, samples, channels);
         else if (plugin.contains("Space")) processSpace(buffer, samples, channels);
         else if (plugin.contains("Master")) processMaster(buffer, samples, channels);
         else if (plugin.contains("Effector")) processEffector(buffer, samples, channels);
@@ -109,10 +113,28 @@ private:
     }
     float value(const char* id) const { return apvts.getRawParameterValue(id)->load(); }
 
+    void updateVoiceFilters() {
+        const auto sampleRate = currentSampleRate;
+        if (sampleRate <= 0.0) return;
+        *highPass[0].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, value("hpf"), 0.7071f);
+        *highPass[1].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, value("hpf"), 0.7071f);
+        *lowPass[0].coefficients = *juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, 16000.0f, 0.7071f);
+        *lowPass[1].coefficients = *juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, 16000.0f, 0.7071f);
+        const float lowDb = -value("low");
+        const float midDb = -value("mid");
+        const float highDb = -value("high");
+        for (int c = 0; c < 2; ++c) {
+            *tone[c].coefficients = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, 180.0f, 0.85f, juce::Decibels::decibelsToGain(lowDb));
+            *cleanupMid[c].coefficients = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, 520.0f, 1.0f, juce::Decibels::decibelsToGain(midDb));
+            *cleanupHigh[c].coefficients = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, 4200.0f, 0.8f, juce::Decibels::decibelsToGain(highDb));
+        }
+    }
+
     void processVoice(juce::AudioBuffer<float>& b, int n, int ch) {
+        updateVoiceFilters();
         const float amt = value("amount"), in = juce::Decibels::decibelsToGain(value("input"));
         const float out = juce::Decibels::decibelsToGain(value("output"));
-        const float threshold = 0.72f - 0.35f * value("leveler") * amt;
+        const float levelAmount = value("leveler") * amt;
         const float color = value("color") * value("colorMix") * amt;
         const float de = value("deess") * amt;
         for (int c = 0; c < ch; ++c) {
@@ -120,10 +142,14 @@ private:
             for (int i = 0; i < n; ++i) {
                 float s = x[i] * in;
                 const float a = std::abs(s);
-                envelope = 0.9992f * envelope + 0.0008f * a;
-                const float target = a > threshold ? threshold / juce::jmax(a, 0.0001f) : 1.0f;
-                const float gain = 1.0f - value("leveler") * amt * (1.0f - target) * 0.55f;
-                s *= gain;
+                const float detector = a * a;
+                const float detectorCoeff = detector > envelope ? 0.996f : 0.9997f;
+                envelope = detectorCoeff * envelope + (1.0f - detectorCoeff) * detector;
+                const float levelDb = juce::Decibels::gainToDecibels(std::sqrt(juce::jmax(envelope, 1.0e-8f)));
+                const float targetDb = juce::jlimit(-24.0f, -15.0f, -20.0f - 4.0f * (1.0f - amt));
+                const float desiredDb = juce::jlimit(-6.0f, 6.0f, (targetDb - levelDb) * levelAmount * 0.45f);
+                levelGain.setTargetValue(juce::Decibels::decibelsToGain(desiredDb));
+                s *= levelGain.getNextValue();
                 // Gentle high-frequency transient softening; intentionally not a hard gate.
                 const float softened = s - de * 0.12f * (s - previous[c]);
                 previous[c] = s;
@@ -133,11 +159,27 @@ private:
                 x[i] = s * out;
             }
         }
-        if (value("reverbMix") > 0.001f) {
+        const float wet = value("reverbMix");
+        if (wet > 0.0f) {
+            juce::AudioBuffer<float> dry(b.getNumChannels(), n);
+            for (int c = 0; c < ch; ++c) dry.copyFrom(c, 0, b, c, 0, n);
             juce::dsp::AudioBlock<float> block(b);
             auto sub = block.getSubBlock(0, (size_t)n).getSubsetChannelBlock(0, (size_t)ch);
             juce::dsp::ProcessContextReplacing<float> ctx(sub);
             reverb.process(ctx);
+            for (int c = 0; c < ch; ++c)
+                for (int i = 0; i < n; ++i)
+                    b.setSample(c, i, dry.getSample(c, i) * (1.0f - wet) + b.getSample(c, i) * wet);
+        }
+        for (int c = 0; c < ch; ++c) {
+            auto* channel = b.getWritePointer(c);
+            for (int i = 0; i < n; ++i) {
+                float sample = channel[i];
+                sample = highPass[c].processSample(sample);
+                sample = tone[c].processSample(sample);
+                sample = cleanupMid[c].processSample(sample);
+                channel[i] = cleanupHigh[c].processSample(sample);
+            }
         }
     }
 
@@ -184,8 +226,12 @@ private:
 
     juce::AudioProcessorValueTreeState apvts;
     juce::dsp::IIR::Filter<float> highPass[2], lowPass[2], deEss[2], tone[2];
+    juce::dsp::IIR::Filter<float> cleanupMid[2], cleanupHigh[2];
     juce::dsp::Reverb reverb;
+    juce::SmoothedValue<float> levelGain;
+    double currentSampleRate = 0.0;
     float envelope=0.0f, previous[2]{0.0f,0.0f};
 };
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new BCrannelAudioProcessor(); }
+

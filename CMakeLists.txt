@@ -13,13 +13,17 @@ FetchContent_Declare(JUCE
 FetchContent_MakeAvailable(JUCE)
 
 function(add_bcrannel_plugin target plugin_code)
+  set(product_name "BCrannel ${target}")
+  if(target STREQUAL "VoiceProcessor")
+    set(product_name "BCrannel Voice")
+  endif()
   juce_add_plugin(BCrannel${target}
     COMPANY_NAME "BCrannel"
     BUNDLE_ID "com.bcrannel.audiolab.${target}"
     PLUGIN_MANUFACTURER_CODE Bcrn
     PLUGIN_CODE ${plugin_code}
     FORMATS VST3
-    PRODUCT_NAME "BCrannel ${target}"
+    PRODUCT_NAME "${product_name}"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -49,3 +53,4 @@ add_bcrannel_plugin(Tune         Bctn)
 add_bcrannel_plugin(Space        Bcsp)
 add_bcrannel_plugin(Master       Bcms)
 add_bcrannel_plugin(Effector     Bcef)
+
