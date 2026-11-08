@@ -263,7 +263,6 @@ public:
         bypassButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffa23d59));
         bypassButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xfff3eff8));
         bypassButton.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
-        bypassButton.setColour(juce::TextButton::outlineColourId, juce::Colour(0xff484151));
         addAndMakeVisible(bypassButton);
         bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             audioProcessor.getValueTreeState(), "bypass", bypassButton);
