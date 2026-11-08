@@ -24,6 +24,7 @@ public:
         reverb.setParameters(rp);
         reverb.prepare(spec);
         envelope = 0.0f;
+        limiterGain = 1.0f;
         levelGain.reset(sampleRate, 0.08);
         levelGain.setCurrentAndTargetValue(1.0f);
         updateVoiceFilters();
@@ -154,9 +155,7 @@ private:
                 const float softened = s - de * 0.12f * (s - previous[c]);
                 previous[c] = s;
                 s = softened * (1.0f - color) + std::tanh(s * (1.0f + 2.0f * color)) * color;
-                const float ceiling = juce::jlimit(0.65f, 0.99f, value("limiter"));
-                if (std::abs(s) > ceiling) s = std::copysign(ceiling + 0.08f * std::tanh((std::abs(s)-ceiling)*4.0f), s);
-                x[i] = s * out;
+                x[i] = s;
             }
         }
         const float wet = value("reverbMix");
@@ -179,6 +178,22 @@ private:
                 sample = tone[c].processSample(sample);
                 sample = cleanupMid[c].processSample(sample);
                 channel[i] = cleanupHigh[c].processSample(sample);
+            }
+        }
+        const float ceiling = juce::Decibels::decibelsToGain(-0.5f - 5.5f * value("limiter"));
+        const float release = std::exp(-1.0f / (0.08f * static_cast<float>(currentSampleRate)));
+        for (int i = 0; i < n; ++i) {
+            float peak = 0.0f;
+            for (int c = 0; c < ch; ++c)
+                peak = juce::jmax(peak, std::abs(b.getSample(c, i) * out));
+            const float targetGain = peak > ceiling ? ceiling / peak : 1.0f;
+            if (targetGain < limiterGain)
+                limiterGain = targetGain;
+            else
+                limiterGain = release * limiterGain + (1.0f - release) * targetGain;
+            for (int c = 0; c < ch; ++c) {
+                const float gained = b.getSample(c, i) * out * limiterGain;
+                b.setSample(c, i, juce::jlimit(-ceiling, ceiling, gained));
             }
         }
     }
@@ -230,6 +245,7 @@ private:
     juce::dsp::Reverb reverb;
     juce::SmoothedValue<float> levelGain;
     double currentSampleRate = 0.0;
+    float limiterGain = 1.0f;
     float envelope=0.0f, previous[2]{0.0f,0.0f};
 };
 
