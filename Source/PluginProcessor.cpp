@@ -2,6 +2,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <cmath>
 #include <array>
+#include <atomic>
 
 class BCrannelAudioProcessor final : public juce::AudioProcessor {
 public:
@@ -74,6 +75,8 @@ public:
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     juce::AudioProcessorValueTreeState& getValueTreeState() { return apvts; }
+    float getLimiterReductionDb() const { return limiterReductionDb.load(); }
+    float getLimiterCeilingDb() const { return -0.5f - 5.5f * value("limiter"); }
 
 private:
     using Range = juce::NormalisableRange<float>;
@@ -186,6 +189,7 @@ private:
         }
         const float ceiling = juce::Decibels::decibelsToGain(-0.5f - 5.5f * value("limiter"));
         const float release = std::exp(-1.0f / (0.08f * static_cast<float>(currentSampleRate)));
+        float maximumReductionDb = 0.0f;
         for (int i = 0; i < n; ++i) {
             float peak = 0.0f;
             for (int c = 0; c < ch; ++c)
@@ -195,11 +199,14 @@ private:
                 limiterGain = targetGain;
             else
                 limiterGain = release * limiterGain + (1.0f - release) * targetGain;
+            maximumReductionDb = juce::jmin(maximumReductionDb,
+                juce::Decibels::gainToDecibels(limiterGain));
             for (int c = 0; c < ch; ++c) {
                 const float gained = b.getSample(c, i) * out * limiterGain;
                 b.setSample(c, i, juce::jlimit(-ceiling, ceiling, gained));
             }
         }
+        limiterReductionDb.store(maximumReductionDb);
     }
 
     void processSpace(juce::AudioBuffer<float>& b, int n, int ch) {
@@ -250,10 +257,11 @@ private:
     juce::SmoothedValue<float> levelGain;
     double currentSampleRate = 0.0;
     float limiterGain = 1.0f;
+    std::atomic<float> limiterReductionDb { 0.0f };
     float envelope=0.0f, previous[2]{0.0f,0.0f};
 };
 
-class BCrannelVoiceEditor final : public juce::AudioProcessorEditor {
+class BCrannelVoiceEditor final : public juce::AudioProcessorEditor, private juce::Timer {
 public:
     explicit BCrannelVoiceEditor(BCrannelAudioProcessor& processor)
         : AudioProcessorEditor(&processor), audioProcessor(processor) {
@@ -284,6 +292,12 @@ public:
             attachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
                 audioProcessor.getValueTreeState(), ids[i], slider);
         }
+        limiterStatus.setColour(juce::Label::textColourId, juce::Colour(0xff49c6d1));
+        limiterStatus.setFont(juce::Font(10.0f, juce::Font::bold));
+        limiterStatus.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(limiterStatus);
+        startTimerHz(15);
+        timerCallback();
     }
 
     void paint(juce::Graphics& g) override {
@@ -317,13 +331,11 @@ public:
             g.setColour(i == 12 ? juce::Colour(0xff49c6d1) : juce::Colour(0xffa98aef));
             g.fillRoundedRectangle(card.getX() + 9.0f, card.getY() + 12.0f, 3.0f, card.getHeight() - 24.0f, 1.5f);
         }
-        g.setColour(juce::Colour(0xffaaa3b4));
-        g.setFont(juce::Font(10.0f));
-        g.drawText("Use BYPASS to compare the unprocessed mic signal.", 28, 551, 704, 16, juce::Justification::centredLeft);
     }
 
     void resized() override {
         bypassButton.setBounds(610, 28, 122, 34);
+        limiterStatus.setBounds(28, 551, 704, 16);
         constexpr int width = 229, height = 74, startX = 34, startY = 135, gapX = 12, gapY = 10;
         for (int i = 0; i < 13; ++i) {
             const int row = i / 3, column = i % 3;
@@ -331,6 +343,13 @@ public:
             labels[i].setBounds(x + 12, y + 7, width - 24, 16);
             sliders[i].setBounds(x + 10, y + 29, width - 20, 32);
         }
+    }
+
+    void timerCallback() override {
+        limiterStatus.setText("LIMITER  |  CEILING "
+            + juce::String(audioProcessor.getLimiterCeilingDb(), 1) + " dBFS  |  REDUCTION "
+            + juce::String(audioProcessor.getLimiterReductionDb(), 1) + " dB",
+            juce::dontSendNotification);
     }
 
 private:
@@ -345,6 +364,7 @@ private:
     };
     BCrannelAudioProcessor& audioProcessor;
     juce::TextButton bypassButton { "BYPASS" };
+    juce::Label limiterStatus;
     std::array<juce::Slider, 13> sliders;
     std::array<juce::Label, 13> labels;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 13> attachments;
